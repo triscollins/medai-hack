@@ -1,0 +1,112 @@
+# =========================================================
+# 3. Ensemble model
+# =========================================================
+
+from sklearn.ensemble import RandomForestClassifier, VotingClassifier
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.metrics import accuracy_score, make_scorer
+from sklearn.utils.class_weight import compute_class_weight
+import numpy as np
+import pandas as pd
+from IPython.display import FileLink
+
+def weighted_accuracy_score(y_true, y_pred, class_penalties):
+    """
+    Custom scoring function that applies penalties for incorrect predictions
+    based on class importance
+    """
+    correct = (y_true == y_pred)
+    weights = np.array([class_penalties[label] for label in y_true])
+    return np.sum(correct * weights) / np.sum(weights)
+
+# Compute class weights based on frequency
+unique_classes = np.unique(y_train)
+class_weights = compute_class_weight(
+    class_weight='balanced',
+    classes=unique_classes,
+    y=y_train
+)
+
+# Create penalty dictionary (higher penalty for underrepresented classes)
+class_penalties = dict(zip(unique_classes, class_weights))
+
+# Create custom scorer
+weighted_scorer = make_scorer(
+    weighted_accuracy_score,
+    class_penalties=class_penalties
+)
+
+# Create base models
+knn_model = KNeighborsClassifier(
+    n_neighbors=5,
+    weights='distance'  # Weight points by distance - this helps with class imbalance
+)
+
+rf_model = RandomForestClassifier(
+    class_weight='balanced',  # For imbalanced dataset
+    n_estimators=10,
+    random_state=42
+)
+
+# Create voting classifier with adjusted weights for RF vs KNN
+# Give slightly more weight to RF since it handles class imbalance better
+ensemble = VotingClassifier(
+    estimators=[
+        ('knn', knn_model),
+        ('rf', rf_model)
+    ],
+    weights=[0.4, 0.6],  # Give more weight to RF predictions
+    voting='soft'  # Use probability predictions
+)
+
+# Fit the models separately
+# KNN without sample weights
+knn_model.fit(X_train_scaled, y_train)
+
+# RF with sample weights
+sample_weights = np.array([class_penalties[label] for label in y_train])
+rf_model.fit(X_train_scaled, y_train, sample_weight=sample_weights)
+
+# Fit the ensemble (this combines the already-fitted base models)
+ensemble.fit(X_train_scaled, y_train)
+
+# Make predictions on test set
+ensemble_predictions = ensemble.predict(X_test_scaled)
+
+# Print model performance metrics
+print("Model Performance on Test Set:")
+print("==============================")
+print("Standard Accuracy:", accuracy_score(y_test, ensemble_predictions))
+print("Weighted Accuracy:", weighted_accuracy_score(y_test, ensemble_predictions, class_penalties))
+
+# Print class-specific performance
+for class_label in unique_classes:
+    mask = y_test == class_label
+    class_acc = accuracy_score(y_test[mask], ensemble_predictions[mask])
+    print(f"Class {class_label} Accuracy: {class_acc:.3f}")
+
+
+# =========================================================
+# 4. Predictions on submission dataset
+# =========================================================
+
+# Make predictions using the modified ensemble
+submission_predictions = ensemble.predict(submission_scaled)
+
+# Create submission DataFrame
+predictions_df = pd.DataFrame({
+    'ID': submission_df['ID'],
+    'predicted_label': submission_predictions
+})
+
+# Save predictions to CSV
+output_file = 'predictions_weighted_ensemble.csv'
+predictions_df.to_csv(output_file, index=False)
+
+# Display download link
+FileLink(output_file)
+
+# Print prediction distribution to check for class imbalance
+print("\nPrediction Distribution in Submission Set:")
+print("=========================================")
+print(pd.Series(submission_predictions).value_counts(normalize=True))
