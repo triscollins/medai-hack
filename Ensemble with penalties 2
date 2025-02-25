@@ -114,63 +114,71 @@ import pandas as pd
 from IPython.display import FileLink
 
 def weighted_accuracy_score(y_true, y_pred, class_penalties):
-    """
-    Custom scoring function that applies penalties for incorrect predictions
-    based on class importance
-    """
-    correct = (y_true == y_pred)
-    weights = np.array([class_penalties[label] for label in y_true])
-    return np.sum(correct * weights) / np.sum(weights)
+ """
+ Custom scoring function that applies penalties for incorrect predictions
+ based on class importance
+ """
+ correct = (y_true == y_pred)
+ weights = np.array([class_penalties[label] for label in y_true])
+ return np.sum(correct * weights) / np.sum(weights)
 
-# Compute class weights based on frequency
+# Compute initial class weights based on frequency
 unique_classes = np.unique(y_train)
 class_weights = compute_class_weight(
-    class_weight='balanced',
-    classes=unique_classes,
-    y=y_train
+ class_weight='balanced',
+ classes=unique_classes,
+ y=y_train
 )
 
-# Create penalty dictionary (higher penalty for underrepresented classes)
-class_penalties = dict(zip(unique_classes, class_weights))
+# Modify class weights to increase penalties for classes 1, 2, and 3
+# Create a custom class weight dictionary
+class_weight_dict = dict(zip(unique_classes, class_weights))
+# Increase weights for classes 1, 2, and 3 by multiplying them by 2
+for class_label in [1, 2, 3]:
+ if class_label in class_weight_dict:
+ class_weight_dict[class_label] *= 5
+
+# Create penalty dictionary using the modified weights
+class_penalties = class_weight_dict
 
 # Create custom scorer
 weighted_scorer = make_scorer(
-    weighted_accuracy_score,
-    class_penalties=class_penalties
+ weighted_accuracy_score,
+ class_penalties=class_penalties
 )
 
 # Create base models
 knn_model = KNeighborsClassifier(
-    n_neighbors=5,
-    weights='distance'  # Weight points by distance - this helps with class imbalance
+ n_neighbors=5,
+ weights='distance' # Weight points by distance - this helps with class imbalance
 )
 
+# Modify Random Forest to use the custom class weights
 rf_model = RandomForestClassifier(
-    class_weight='balanced',  # For imbalanced dataset
-    n_estimators=10,
-    random_state=42
+ class_weight=class_weight_dict, # Use our custom class weights
+ n_estimators=10,
+ random_state=42
 )
 
 # Create voting classifier with adjusted weights for RF vs KNN
-# Give slightly more weight to RF since it handles class imbalance better
 ensemble = VotingClassifier(
-    estimators=[
-        ('knn', knn_model),
-        ('rf', rf_model)
-    ],
-    weights=[0.4, 0.6],  # Give more weight to RF predictions
-    voting='soft'  # Use probability predictions
+ estimators=[
+ ('knn', knn_model),
+ ('rf', rf_model)
+ ],
+ weights=[0.3, 0.7], # Give even more weight to RF since it now handles class penalties better
+ voting='soft' # Use probability predictions
 )
 
 # Fit the models separately
 # KNN without sample weights
 knn_model.fit(X_train_scaled, y_train)
 
-# RF with sample weights
+# RF with modified sample weights
 sample_weights = np.array([class_penalties[label] for label in y_train])
 rf_model.fit(X_train_scaled, y_train, sample_weight=sample_weights)
 
-# Fit the ensemble (this combines the already-fitted base models)
+# Fit the ensemble
 ensemble.fit(X_train_scaled, y_train)
 
 # Make predictions on test set
@@ -183,10 +191,12 @@ print("Standard Accuracy:", accuracy_score(y_test, ensemble_predictions))
 print("Weighted Accuracy:", weighted_accuracy_score(y_test, ensemble_predictions, class_penalties))
 
 # Print class-specific performance
+print("\nClass-specific Performance:")
+print("==========================")
 for class_label in unique_classes:
-    mask = y_test == class_label
-    class_acc = accuracy_score(y_test[mask], ensemble_predictions[mask])
-    print(f"Class {class_label} Accuracy: {class_acc:.3f}")
+ mask = y_test == class_label
+ class_acc = accuracy_score(y_test[mask], ensemble_predictions[mask])
+ print(f"Class {class_label} Accuracy: {class_acc:.3f}")
 
 
 # =========================================================
